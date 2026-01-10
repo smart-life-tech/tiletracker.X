@@ -1,7 +1,7 @@
 /*
  * PIC16F15324 VL53L1X Advanced Implementation
  *
- * Based on the Arduino VL53L1X library (STSW-IMG007)
+ * Based on the  VL53L1X library (STSW-IMG007)
  * Enhanced I2C communication with support for:
  * - Multiple distance modes (Short, Medium, Long)
  * - Continuous and single-shot ranging
@@ -24,7 +24,7 @@
 
 
 // ============================================================================
-// VL53L1X Register Map (from Arduino library reference)
+// VL53L1X Register Map (from  library reference)
 // ============================================================================
 
 #define IDENTIFICATION__MODEL_ID           0x010F
