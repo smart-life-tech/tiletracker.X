@@ -2,15 +2,15 @@
 
 manifest_file_version: 1.0.0
 project: tile_tracker
-creation_date: 2026-01-09T20:12:28.177+01:00[Africa/Luanda]
+creation_date: 2026-01-10T23:12:36.795+01:00[Africa/Luanda]
 operating_system: Windows 10
 mcc_mode: IDE
 mcc_mode_version: v6.20
 device_name: PIC16LF15324
-compiler: XC8 2.46
+compiler: pic-as 2.46
 mcc_version: 5.5.0
 mcc_core_version: 5.7.0
-content_manager_version: 5.0.0
+content_manager_version: 5.0.1
 is_mcc_offline: false
 is_using_prerelease_versions: false
 mcc_content_registries: https://registry.npmjs.org/

@@ -12,14 +12,6 @@
          <string>Application Builder</string>
          <string>class com.microchip.mcc.melody.module.FrameworkModule</string>
       </entry>
-      <entry>
-         <string>MAIN MANAGER</string>
-         <string>class com.microchip.mcc.melody.hw.module.HardwareModule</string>
-      </entry>
-      <entry>
-         <string>module17</string>
-         <string>class com.microchip.mcc.melody.script.module.ScriptModule</string>
-      </entry>
    </usedClasses>
    <usedLibraries class="java.util.ArrayList">
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.melody.Library" version="2.7.1"/>
