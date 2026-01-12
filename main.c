@@ -56,6 +56,19 @@
 
 #define VL53L1X_I2C_ADDR                   0x52
 
+// VL53L1X Default Configuration Array (required for proper initialization)
+// This is the essential configuration block from ST's API
+const unsigned char VL53L1X_DEFAULT_CONFIG[] = {
+    0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x02, 0x08, 0x00, 0x08, 0x10, 0x01,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x20, 0x0B, 0x00, 0x00, 0x02, 0x0A, 0x21, 0x00, 0x00, 0x05, 0x00,
+    0x00, 0x00, 0x00, 0xC8, 0x00, 0x00, 0x38, 0xFF, 0x01, 0x00, 0x08, 0x00,
+    0x00, 0x01, 0xCC, 0x0F, 0x01, 0xF1, 0x0D, 0x01, 0x68, 0x00, 0x80, 0x08,
+    0xB8, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x0F, 0x0D, 0x0E, 0x0E, 0x00, 0x00, 0x02, 0xC7, 0xFF,
+    0x9B, 0x00, 0x00, 0x00, 0x01, 0x01, 0x40
+};
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -403,13 +416,33 @@ void GPIO_Init(void)
 {
     // Configure Port A - LED on RA4 (proximity), RA5 (heartbeat)
     ANSELA = 0x00;           // All digital I/O
-    TRISA = 0b00010011;      // RA4 and RA5 as outputs
+    TRISA = 0b11001111;      // RA4 and RA5 as outputs (0 = output)
     PORTA = 0x00;
 
     // Configure Port C - I2C on RC0 (SCL), RC1 (SDA)
     ANSELC = 0x00;           // All digital I/O
-    TRISC = 0b11111100;      // RC0, RC1 as open-drain inputs
+    TRISC = 0b11111111;      // RC0, RC1 as inputs initially (I2C will control)
     PORTC = 0x00;
+    
+    // Configure PPS (Peripheral Pin Select) for I2C
+    // Unlock PPS
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xAA;
+    PPSLOCKbits.PPSLOCKED = 0;
+    
+    // Map I2C to RC0 (SCL) and RC1 (SDA)
+    SSP1CLKPPS = 0x10;       // RC0 -> SCL input (0x10 = RC0)
+    SSP1DATPPS = 0x11;       // RC1 -> SDA input (0x11 = RC1)
+    RC0PPS = 0x15;           // SCL output -> RC0 (0x15 = SCL)
+    RC1PPS = 0x16;           // SDA output -> RC1 (0x16 = SDA)
+    
+    // Lock PPS
+    PPSLOCK = 0x55;
+    PPSLOCK = 0xAA;
+    PPSLOCKbits.PPSLOCKED = 1;
+    
+    // Set RC0 and RC1 as open-drain
+    ODCONC = 0b00000011;     // RC0, RC1 open-drain enabled
 }
 
 // ============================================================================
@@ -418,15 +451,21 @@ void GPIO_Init(void)
 
 void I2C_Init(void)
 {
+    // Disable I2C before configuration
+    SSP1CON1 = 0x00;
+    
     // Baud rate: 100 kHz @ 8MHz
-    // BAUD = (Fosc / (4 * Speed)) - 1 = (8MHz / 400kHz) - 1 = 19
+    // BAUD = (Fosc / (4 * Speed)) - 1 = (8MHz / (4 * 100kHz)) - 1 = 19
     SSP1ADD = 19;
 
-    // I2C Master Mode
-    SSP1CON1 = 0b00101000;
+    // I2C Master Mode, enable MSSP
+    SSP1CON1bits.SSPM = 0b1000;  // I2C Master mode, clock = FOSC/(4 * (SSP1ADD+1))
+    SSP1CON1bits.SSPEN = 1;      // Enable MSSP module
+    
     SSP1CON2 = 0x00;
     SSP1CON3 = 0x00;
-    SSP1STATbits.SMP = 1;    // Slew rate disabled
+    SSP1STATbits.SMP = 1;        // Slew rate control disabled for 100kHz
+    SSP1STATbits.CKE = 0;        // Disable SMBus specific inputs
 }
 
 // ============================================================================
@@ -685,15 +724,75 @@ unsigned char VL53L1X_Check_Model_ID(void)
 
 unsigned char VL53L1X_Init(void)
 {
+    unsigned char byte;
+    
+    // Wait for device to boot
+    Delay_ms(100);
+    
     // Software reset
     if(!VL53L1X_Soft_Reset()) return 0;
-    Delay_ms(10);
+    Delay_ms(100);
 
+    // Wait for firmware to boot by polling bit 0 of register 0x0006
+    unsigned int timeout = 1000;
+    while(timeout > 0)
+    {
+        if(!I2C_Read_Register(0x06, &byte)) return 0;
+        if(byte & 0x01) break;  // Firmware ready
+        Delay_ms(1);
+        timeout--;
+    }
+    if(timeout == 0) return 0;  // Boot timeout
+    
     // Check model ID
     if(!VL53L1X_Check_Model_ID()) return 0;
-
+    
+    // Load default configuration block (essential for VL53L1X operation)
+    // Write configuration to register 0x002D onwards
+    I2C_Start();
+    I2C_Send_Byte(VL53L1X_I2C_ADDR);
+    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    
+    // Write start address 0x002D
+    I2C_Send_Byte(0x00);
+    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    I2C_Send_Byte(0x2D);
+    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    
+    // Write configuration block
+    for(unsigned char i = 0; i < sizeof(VL53L1X_DEFAULT_CONFIG); i++)
+    {
+        I2C_Send_Byte(VL53L1X_DEFAULT_CONFIG[i]);
+        if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    }
+    I2C_Stop();
+    Delay_ms(10);
+    
+    // Start VHV calibration (essential step)
+    if(!I2C_Write_Register(SYSTEM__MODE_START, 0x40)) return 0;
+    Delay_ms(10);
+    
+    // Wait for calibration complete
+    timeout = 1000;
+    while(timeout > 0)
+    {
+        if(!I2C_Read_Register(0x06, &byte)) return 0;
+        if(byte & 0x01) break;
+        Delay_ms(1);
+        timeout--;
+    }
+    if(timeout == 0) return 0;
+    
+    // Clear interrupt and stop ranging
+    I2C_Write_Register(SYSTEM__INTERRUPT_CLEAR, 0x01);
+    I2C_Write_Register(SYSTEM__MODE_START, 0x00);
+    Delay_ms(10);
+    
     // Set default distance mode to Long
     if(!VL53L1X_Set_Distance_Mode(Long)) return 0;
+    
+    // Set timing budget to 50ms (default)
+    if(!I2C_Write_Register16(MEASUREMENT_TIMING_BUDGET_CONFIG, 0x00C8)) return 0;
 
     return 1;
 }
