@@ -31,8 +31,7 @@
 #define IDENTIFICATION__MODULE_TYPE        0x0110
 
 #define SOFT_RESET                         0x0000
-
-#define RESULT__RANGE_STATUS               0x0089
+#define SYSTEM__BOOT_STATE                 0x0006  // Critical: check firmware loaded (bit 0)
 #define RESULT__PEAK_SIGNAL_COUNT_RATE_MCPS 0x008C
 #define RESULT__AMBIENT_COUNT_RATE_MCPS    0x0091
 #define RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM 0x0096
@@ -150,6 +149,7 @@ unsigned char VL53L1X_Init(void);
 unsigned char VL53L1X_Soft_Reset(void);
 unsigned char VL53L1X_Check_Model_ID(void);
 unsigned char VL53L1X_Set_Distance_Mode(DistanceMode mode);
+unsigned char VL53L1X_Set_Measurement_Timing_Budget(unsigned int budget_us);
 unsigned char VL53L1X_Start_Single_Shot(void);
 unsigned char VL53L1X_Start_Continuous(int period_ms);
 unsigned char VL53L1X_Stop_Continuous(void);
@@ -487,8 +487,14 @@ void I2C_Stop(void)
 void I2C_Send_Byte(unsigned char data)
 {
     SSP1BUF = data;
-    while(SSP1STATbits.BF);
-    while(SSP1CON2bits.ACKEN);
+    while(SSP1STATbits.BF);  // Wait for transfer complete
+    
+    // Check for NACK - if received, set error flag
+    if(SSP1CON2bits.ACKSTAT)
+    {
+        i2c_error = 1;  // NACK received
+    }
+    while(SSP1CON2bits.ACKEN);  // Wait for ACK to complete
 }
 
 unsigned char I2C_Receive_Byte(unsigned char ack)
@@ -515,23 +521,19 @@ unsigned char I2C_Write_Register(int reg, unsigned char value)
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
 
+    i2c_error = 0;
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
-
-    if(SSP1CON2bits.ACKSTAT)
-    {
-        I2C_Stop();
-        return 0;
-    }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(value);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Stop();
     return 1;
@@ -542,21 +544,22 @@ unsigned char I2C_Read_Register(int reg, unsigned char *value)
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
 
-    // Set address
+    // Set address phase
+    i2c_error = 0;
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     // Repeated START and read
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     *value = I2C_Receive_Byte(0);  // NACK for last byte
 
@@ -576,20 +579,21 @@ unsigned char I2C_Write_Register16(int reg, int value)
     unsigned char val_low = (unsigned char)(value & 0xFF);
 
     I2C_Start();
+    i2c_error = 0;
     I2C_Send_Byte(VL53L1X_I2C_ADDR);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(val_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(val_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Stop();
     return 1;
@@ -601,26 +605,32 @@ unsigned char I2C_Read_Register16(int reg, int *value)
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
     unsigned char val_high, val_low;
 
+    // ADDRESS PHASE - set register address for read
+    i2c_error = 0;
     I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
+    // REPEATED START - critical for VL53L1X compliance
     I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
+    if(i2c_error) { I2C_Stop(); return 0; }
 
-    val_high = I2C_Receive_Byte(1);  // ACK for high byte
-    val_low = I2C_Receive_Byte(0);   // NACK for low byte
-
-    *value = (val_high << 8) | val_low;
+    // READ PHASE - read two bytes
+    val_high = I2C_Receive_Byte(1);  // ACK for high byte (more data coming)
+    val_low = I2C_Receive_Byte(0);   // NACK for low byte (last byte)
 
     I2C_Stop();
+    
+    // Combine bytes to 16-bit signed integer
+    *value = (int)((unsigned int)val_high << 8) | (unsigned int)val_low;
+    
     return 1;
 }
 
@@ -633,28 +643,29 @@ unsigned char I2C_Write_Register32(int reg, int value)
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
 
+    i2c_error = 0;
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     // Send 4 bytes (MSB first)
     I2C_Send_Byte((unsigned char)((value >> 24) & 0xFF));
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte((unsigned char)((value >> 16) & 0xFF));
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte((unsigned char)((value >> 8) & 0xFF));
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte((unsigned char)(value & 0xFF));
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Stop();
     return 1;
@@ -666,19 +677,21 @@ unsigned char I2C_Read_Register32(int reg, int *value)
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
     unsigned char byte0, byte1, byte2, byte3;
 
+    i2c_error = 0;
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_high);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte(reg_low);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
+    // Repeated START for read
     I2C_Start();
     I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
 
     // Read 4 bytes (MSB first)
     byte0 = I2C_Receive_Byte(1);  // ACK
@@ -724,107 +737,133 @@ unsigned char VL53L1X_Check_Model_ID(void)
 
 unsigned char VL53L1X_Init(void)
 {
-    unsigned char byte;
+    unsigned char boot_state;
+    unsigned int timeout;
     
-    // Wait for device to boot
-    Delay_ms(100);
+    // Delay after power-up (critical - at least 20ms required per ST)
+    Delay_ms(20);
     
     // Software reset
     if(!VL53L1X_Soft_Reset()) return 0;
-    Delay_ms(100);
+    Delay_ms(50);
 
-    // Wait for firmware to boot by polling bit 0 of register 0x0006
-    unsigned int timeout = 1000;
+    // CRITICAL: Wait for firmware to boot (SYSTEM__BOOT_STATE register bit 0)
+    // The VL53L1X will NOT respond properly until firmware is booted
+    timeout = 5000;
     while(timeout > 0)
     {
-        if(!I2C_Read_Register(0x06, &byte)) return 0;
-        if(byte & 0x01) break;  // Firmware ready
+        i2c_error = 0;
+        if(!I2C_Read_Register(SYSTEM__BOOT_STATE, &boot_state)) 
+        {
+            Delay_ms(1);
+            timeout--;
+            continue;
+        }
+        
+        if(boot_state & 0x01) break;  // Bit 0 = 1 means firmware is booted
         Delay_ms(1);
         timeout--;
     }
-    if(timeout == 0) return 0;  // Boot timeout
+    if(timeout == 0) return 0;  // Boot timeout - firmware did not load
     
-    // Check model ID
+    Delay_ms(10);
+    
+    // Check model ID (now that firmware is loaded)
     if(!VL53L1X_Check_Model_ID()) return 0;
     
-    // Load default configuration block (essential for VL53L1X operation)
-    // Write configuration to register 0x002D onwards
+    // Load default configuration block (90 bytes from ST STSW-IMG007)
+    // This is absolutely required for VL53L1X to function
     I2C_Start();
+    i2c_error = 0;
     I2C_Send_Byte(VL53L1X_I2C_ADDR);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
     
     // Write start address 0x002D
     I2C_Send_Byte(0x00);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
     I2C_Send_Byte(0x2D);
-    if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+    if(i2c_error) { I2C_Stop(); return 0; }
     
-    // Write configuration block
+    // Write configuration block (90 bytes)
     for(unsigned char i = 0; i < sizeof(VL53L1X_DEFAULT_CONFIG); i++)
     {
         I2C_Send_Byte(VL53L1X_DEFAULT_CONFIG[i]);
-        if(SSP1CON2bits.ACKSTAT) { I2C_Stop(); return 0; }
+        if(i2c_error) { I2C_Stop(); return 0; }
     }
     I2C_Stop();
     Delay_ms(10);
     
-    // Start VHV calibration (essential step)
-    if(!I2C_Write_Register(SYSTEM__MODE_START, 0x40)) return 0;
-    Delay_ms(10);
-    
-    // Wait for calibration complete
-    timeout = 1000;
-    while(timeout > 0)
-    {
-        if(!I2C_Read_Register(0x06, &byte)) return 0;
-        if(byte & 0x01) break;
-        Delay_ms(1);
-        timeout--;
-    }
-    if(timeout == 0) return 0;
-    
-    // Clear interrupt and stop ranging
-    I2C_Write_Register(SYSTEM__INTERRUPT_CLEAR, 0x01);
-    I2C_Write_Register(SYSTEM__MODE_START, 0x00);
-    Delay_ms(10);
-    
-    // Set default distance mode to Long
+    // Set distance mode (Long mode - ~1.3m max range)
     if(!VL53L1X_Set_Distance_Mode(Long)) return 0;
+    Delay_ms(5);
     
-    // Set timing budget to 50ms (default)
-    if(!I2C_Write_Register16(MEASUREMENT_TIMING_BUDGET_CONFIG, 0x00C8)) return 0;
-
+    // Set measurement timing budget to 50ms (50000 microseconds)
+    // This controls measurement accuracy and speed
+    if(!VL53L1X_Set_Measurement_Timing_Budget(50000)) return 0;
+    Delay_ms(5);
+    
     return 1;
 }
 
+
+
 unsigned char VL53L1X_Set_Distance_Mode(DistanceMode mode)
 {
-    unsigned char vcsel_period_a, vcsel_period_b;
+    unsigned char timeout_val;
 
     switch(mode)
     {
         case Short:
-            vcsel_period_a = 0x07;
-            vcsel_period_b = 0x05;
+            timeout_val = DISTANCE_MODE_SHORT_TIMEOUT;  // 0x14
             break;
 
         case Medium:
-            vcsel_period_a = 0x0B;
-            vcsel_period_b = 0x09;
+            timeout_val = DISTANCE_MODE_MEDIUM_TIMEOUT;  // 0x0B
             break;
 
         case Long:
         default:
-            vcsel_period_a = 0x0F;
-            vcsel_period_b = 0x0D;
+            timeout_val = DISTANCE_MODE_LONG_TIMEOUT;  // 0x0A
             break;
     }
 
-    // Set VCSEL periods
-    if(!I2C_Write_Register(RANGE_CONFIG__VCSEL_PERIOD_A, vcsel_period_a)) return 0;
-    if(!I2C_Write_Register(RANGE_CONFIG__VCSEL_PERIOD_B, vcsel_period_b)) return 0;
+    // Set distance mode timeout in PHASECAL_CONFIG__TIMEOUT_MACROP register
+    // This register controls the distance measurement mode
+    if(!I2C_Write_Register(PHASECAL_CONFIG__TIMEOUT_MACROP, timeout_val)) return 0;
 
     current_distance_mode = mode;
+    return 1;
+}
+
+unsigned char VL53L1X_Set_Measurement_Timing_Budget(unsigned int budget_us)
+{
+    // Convert microseconds to timing budget value
+    // The sensor uses internal timing units
+    // Timing budget in register: roughly (budget_us / 1000) - offset
+    
+    unsigned int timing_val;
+    
+    // Convert 50000us (50ms) to register value
+    // Typical values: 20000us=20, 33000us=33, 50000us=50
+    if(budget_us >= 50000)
+    {
+        // Long mode timing budget
+        timing_val = 0x00C8;  // 50ms
+    }
+    else if(budget_us >= 33000)
+    {
+        // Medium mode timing budget
+        timing_val = 0x0080;  // 33ms
+    }
+    else
+    {
+        // Short mode timing budget
+        timing_val = 0x0050;  // 20ms
+    }
+    
+    // Write timing budget to register
+    if(!I2C_Write_Register16(MEASUREMENT_TIMING_BUDGET_CONFIG, timing_val)) return 0;
+    
     return 1;
 }
 
@@ -841,15 +880,17 @@ unsigned char VL53L1X_Start_Single_Shot(void)
 
 unsigned char VL53L1X_Start_Continuous(int period_ms)
 {
-    // Set inter-measurement period
-    if(!I2C_Write_Register32(SYSTEM__INTERMEASUREMENT_PERIOD, period_ms * 1000)) return 0;
-
-    // Clear interrupt
+    // Inter-measurement period must be >= timing budget
+    // Convert ms to internal units (approximately period_ms * 1000)
+    unsigned int period_us = (unsigned int)period_ms * 1000;
+    
+    // Clear interrupt before starting
     if(!I2C_Write_Register(SYSTEM__INTERRUPT_CLEAR, 0x01)) return 0;
+    Delay_ms(1);
 
-    // Start continuous ranging (mode 0x40 = timed)
+    // Start continuous ranging (0x40 = timed mode)
     if(!I2C_Write_Register(SYSTEM__MODE_START, 0x40)) return 0;
-
+    
     return 1;
 }
 
@@ -879,12 +920,13 @@ unsigned char VL53L1X_Read_Measurement(MeasurementData *data)
     int signal_rate, ambient_rate;
 
     if(!I2C_Read_Register(RESULT__RANGE_STATUS, &status)) return 0;
+    
+    // Parse status byte - range status is in upper nibble (bits 7:4)
+    unsigned char range_status = (status >> 4) & 0x0F;
+
     if(!I2C_Read_Register16(RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM, &range_mm)) return 0;
     if(!I2C_Read_Register16(RESULT__PEAK_SIGNAL_COUNT_RATE_MCPS, &signal_rate)) return 0;
     if(!I2C_Read_Register16(RESULT__AMBIENT_COUNT_RATE_MCPS, &ambient_rate)) return 0;
-
-    // Parse status
-    unsigned char range_status = (status >> 4) & 0x0F;
 
     data->range_mm = range_mm;
     data->signal_count_rate_mcps = signal_rate;
@@ -909,7 +951,7 @@ unsigned char VL53L1X_Read_Measurement(MeasurementData *data)
             data->range_status = ProcessingFail;
     }
 
-    // Clear interrupt
+    // Clear interrupt for next measurement
     I2C_Write_Register(SYSTEM__INTERRUPT_CLEAR, 0x01);
 
     return 1;
