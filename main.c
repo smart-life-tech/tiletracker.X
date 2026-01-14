@@ -63,6 +63,9 @@
 
 #define VL53L1X_I2C_ADDR                   (0x29 << 1)   // 7-bit address 0x29, shifted for PIC MSSP
 
+// I2C Retry Configuration
+#define I2C_MAX_RETRIES                    3   // Retry up to 3 times on transient failures
+
 // VL53L1X Default Configuration Array (required for proper initialization)
 // This is the essential configuration block from ST's API
 const unsigned char VL53L1X_DEFAULT_CONFIG[] = {
@@ -548,51 +551,63 @@ unsigned char I2C_Write_Register(int reg, unsigned char value)
 {
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
+    unsigned char retry;
 
-    i2c_error = 0;
-    I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
-    if(i2c_error) { I2C_Stop(); return 0; }
+    for(retry = 0; retry < I2C_MAX_RETRIES; retry++)
+    {
+        i2c_error = 0;
+        I2C_Start();
+        I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_high);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_high);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_low);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_low);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(value);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(value);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Stop();
-    return 1;
+        I2C_Stop();
+        return 1;  // Success
+    }
+    
+    return 0;  // Failed after all retries
 }
 
 unsigned char I2C_Read_Register(int reg, unsigned char *value)
 {
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
+    unsigned char retry;
 
-    // Set address phase
-    i2c_error = 0;
-    I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
-    if(i2c_error) { I2C_Stop(); return 0; }
+    for(retry = 0; retry < I2C_MAX_RETRIES; retry++)
+    {
+        // Set address phase
+        i2c_error = 0;
+        I2C_Start();
+        I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_high);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_high);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_low);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_low);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    // Repeated START and read
-    I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
-    if(i2c_error) { I2C_Stop(); return 0; }
+        // Repeated START and read
+        I2C_Start();
+        I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    *value = I2C_Receive_Byte(0);  // NACK for last byte
+        *value = I2C_Receive_Byte(0);  // NACK for last byte
 
-    I2C_Stop();
-    return 1;
+        I2C_Stop();
+        return 1;  // Success
+    }
+    
+    return 0;  // Failed after all retries
 }
 
 // ============================================================================
@@ -632,34 +647,40 @@ unsigned char I2C_Read_Register16(int reg, int *value)
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
     unsigned char val_high, val_low;
+    unsigned char retry;
 
-    // ADDRESS PHASE - set register address for read
-    i2c_error = 0;
-    I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
-    if(i2c_error) { I2C_Stop(); return 0; }
+    for(retry = 0; retry < I2C_MAX_RETRIES; retry++)
+    {
+        // ADDRESS PHASE - set register address for read
+        i2c_error = 0;
+        I2C_Start();
+        I2C_Send_Byte(VL53L1X_I2C_ADDR);  // Write address
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_high);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_high);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    I2C_Send_Byte(reg_low);
-    if(i2c_error) { I2C_Stop(); return 0; }
+        I2C_Send_Byte(reg_low);
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    // REPEATED START - critical for VL53L1X compliance
-    I2C_Start();
-    I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
-    if(i2c_error) { I2C_Stop(); return 0; }
+        // REPEATED START - critical for VL53L1X compliance
+        I2C_Start();
+        I2C_Send_Byte(VL53L1X_I2C_ADDR | 0x01);  // Read address
+        if(i2c_error) { I2C_Stop(); continue; }
 
-    // READ PHASE - read two bytes
-    val_high = I2C_Receive_Byte(1);  // ACK for high byte (more data coming)
-    val_low = I2C_Receive_Byte(0);   // NACK for low byte (last byte)
+        // READ PHASE - read two bytes
+        val_high = I2C_Receive_Byte(1);  // ACK for high byte (more data coming)
+        val_low = I2C_Receive_Byte(0);   // NACK for low byte (last byte)
 
-    I2C_Stop();
+        I2C_Stop();
+        
+        // Combine bytes to 16-bit signed integer
+        *value = (int)(((unsigned int)val_high << 8) | (unsigned int)val_low);
+        
+        return 1;  // Success
+    }
     
-    // Combine bytes to 16-bit signed integer
-    *value = (int)(((unsigned int)val_high << 8) | (unsigned int)val_low);
-    
-    return 1;
+    return 0;  // Failed after all retries
 }
 
 // ============================================================================
