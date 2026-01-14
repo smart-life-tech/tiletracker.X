@@ -35,6 +35,7 @@
 #define RESULT__PEAK_SIGNAL_COUNT_RATE_MCPS 0x008C
 #define RESULT__AMBIENT_COUNT_RATE_MCPS    0x0091
 #define RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM 0x0096
+#define RESULT__RANGE_STATUS               0x0089
 
 #define MEASUREMENT_TIMING_BUDGET_CONFIG   0x002A
 
@@ -48,10 +49,17 @@
 #define RANGE_CONFIG__TIMEOUT_MACROP_A     0x005E
 #define RANGE_CONFIG__TIMEOUT_MACROP_B     0x0061
 
+#define PHASECAL_CONFIG__TIMEOUT_MACROP    0x004B
+
 #define SD_CONFIG__WOI_SD0                 0x002E
 #define SD_CONFIG__WOI_SD1                 0x002F
 #define SD_CONFIG__INITIAL_PHASE_SD0       0x0030
 #define SD_CONFIG__INITIAL_PHASE_SD1       0x0031
+
+// Distance Mode Timeout Values
+#define DISTANCE_MODE_SHORT_TIMEOUT        0x14
+#define DISTANCE_MODE_MEDIUM_TIMEOUT       0x0B
+#define DISTANCE_MODE_LONG_TIMEOUT         0x0A
 
 #define VL53L1X_I2C_ADDR                   0x52
 
@@ -295,9 +303,9 @@ void main(void)
     // Initialization sequence - triple blink on status LED
     for(int i = 0; i < 3; i++)
     {
-        RA4 = 1;
+        RA4 = (unsigned char)1;
         Delay_ms(100);
-        RA4 = 0;
+        RA4 = (unsigned char)0;
         Delay_ms(100);
     }
 
@@ -316,9 +324,9 @@ void main(void)
     // Sensor initialized successfully - double pulse pattern briefly
     for(int i = 0; i < 2; i++)
     {
-        RA4 = 1;
+        RA4 = (unsigned char)1;
         Delay_ms(150);
-        RA4 = 0;
+        RA4 = (unsigned char)0;
         Delay_ms(150);
     }
 
@@ -399,10 +407,10 @@ void main(void)
         }
 
         // Update status LED (RA4) with current pattern
-        RA4 = LED_Update_Pattern(status_led_pattern);
+        RA4 = (unsigned char)LED_Update_Pattern(status_led_pattern);
         
         // Update heartbeat LED (RA5) with heartbeat pattern
-        RA5 = LED_Update_Pattern(heartbeat_pattern);
+        RA5 = (unsigned char)LED_Update_Pattern(heartbeat_pattern);
 
         Delay_ms(50);
     }
@@ -629,7 +637,7 @@ unsigned char I2C_Read_Register16(int reg, int *value)
     I2C_Stop();
     
     // Combine bytes to 16-bit signed integer
-    *value = (int)((unsigned int)val_high << 8) | (unsigned int)val_low;
+    *value = (int)(((unsigned int)val_high << 8) | (unsigned int)val_low);
     
     return 1;
 }
@@ -655,10 +663,10 @@ unsigned char I2C_Write_Register32(int reg, int value)
     if(i2c_error) { I2C_Stop(); return 0; }
 
     // Send 4 bytes (MSB first)
-    I2C_Send_Byte((unsigned char)((value >> 24) & 0xFF));
+    I2C_Send_Byte((unsigned char)(((unsigned long)value >> 24) & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
-    I2C_Send_Byte((unsigned char)((value >> 16) & 0xFF));
+    I2C_Send_Byte((unsigned char)(((unsigned long)value >> 16) & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Send_Byte((unsigned char)((value >> 8) & 0xFF));
@@ -699,8 +707,8 @@ unsigned char I2C_Read_Register32(int reg, int *value)
     byte2 = I2C_Receive_Byte(1);  // ACK
     byte3 = I2C_Receive_Byte(0);  // NACK (last byte)
 
-    *value = ((int)byte0 << 24) | ((int)byte1 << 16) |
-             ((int)byte2 << 8) | byte3;
+    *value = (int)((((unsigned long)byte0 << 24) | ((unsigned long)byte1 << 16)) |
+             (((unsigned long)byte2 << 8) | byte3));
 
     I2C_Stop();
     return 1;
@@ -862,7 +870,7 @@ unsigned char VL53L1X_Set_Measurement_Timing_Budget(unsigned int budget_us)
     }
     
     // Write timing budget to register
-    if(!I2C_Write_Register16(MEASUREMENT_TIMING_BUDGET_CONFIG, timing_val)) return 0;
+    if(!I2C_Write_Register16(MEASUREMENT_TIMING_BUDGET_CONFIG, (int)timing_val)) return 0;
     
     return 1;
 }
