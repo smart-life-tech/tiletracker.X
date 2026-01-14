@@ -708,8 +708,9 @@ unsigned char I2C_Read_Register32(int reg, int *value)
     byte2 = I2C_Receive_Byte(1);  // ACK
     byte3 = I2C_Receive_Byte(0);  // NACK (last byte)
 
-    *value = (int)(((unsigned long)byte0 << 24) | ((unsigned long)byte1 << 16) |
-             ((unsigned long)byte2 << 8) | (unsigned long)byte3);
+    unsigned long utemp = (((unsigned long)byte0 << 24) | ((unsigned long)byte1 << 16) |
+                           ((unsigned long)byte2 << 8) | (unsigned long)byte3);
+    *value = (int)utemp;
 
     I2C_Stop();
     return 1;
