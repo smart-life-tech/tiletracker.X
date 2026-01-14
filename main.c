@@ -87,15 +87,6 @@ typedef enum {
 } DistanceMode;
 
 typedef enum {
-    RangeValid = 0,
-    SigmaFail = 1,
-    SignalFail = 2,
-    OutOfBoundsFail = 4,
-    HardwareFail = 5,
-    ProcessingFail = 6
-} RangeStatus;
-
-typedef enum {
     LED_PATTERN_OFF = 0,
     LED_PATTERN_SOLID_ON = 1,
     LED_PATTERN_SOLID_OFF = 2,
@@ -105,6 +96,20 @@ typedef enum {
     LED_PATTERN_TRIPLE_PULSE = 6,    // Three quick pulses
     LED_PATTERN_SOS = 7               // SOS pattern (3-3-3)
 } LEDPattern;
+
+typedef enum {
+    RangeValid = 0,
+    SigmaFail = 1,
+    SignalFail = 2,
+    OutOfBoundsFail = 4,
+    HardwareFail = 5,
+    ProcessingFail = 6
+} RangeStatus;
+
+typedef struct {
+    LEDPattern pattern;
+    unsigned int counter;
+} LEDState;
 
 typedef struct {
     int range_mm;
@@ -122,11 +127,9 @@ static MeasurementData measurement;
 static DistanceMode current_distance_mode = Long;
 static unsigned int heartbeat_counter = 0;  // Counter for heartbeat LED (RA5)
 
-// LED pattern tracking
-static LEDPattern status_led_pattern = LED_PATTERN_SLOW_BLINK;  // RA4 status
-static LEDPattern heartbeat_pattern = LED_PATTERN_SLOW_BLINK;   // RA5 heartbeat
-static unsigned int led_pattern_counter = 0;
-static unsigned char led_state = 0;
+// LED state tracking - each LED maintains independent pattern and counter
+static LEDState status_led = {LED_PATTERN_SLOW_BLINK, 0};    // RA4 status LED
+static LEDState heartbeat_led = {LED_PATTERN_SLOW_BLINK, 0}; // RA5 heartbeat LED
 
 // ============================================================================
 // Function Prototypes
@@ -135,8 +138,8 @@ static unsigned char led_state = 0;
 void I2C_Init(void);
 void GPIO_Init(void);
 void Delay_ms(unsigned int ms);
-unsigned char LED_Update_Pattern(LEDPattern pattern);
-void LED_Set_Pattern(LEDPattern *current_pattern, LEDPattern new_pattern);
+unsigned char LED_Update_Pattern(LEDState *led);
+void LED_Set_Pattern(LEDState *led, LEDPattern new_pattern);
 
 // I2C Core Functions
 void I2C_Start(void);
@@ -168,18 +171,20 @@ unsigned char VL53L1X_Read_Measurement(MeasurementData *data);
 // LED Pattern Management Functions
 // ============================================================================
 
-void LED_Set_Pattern(LEDPattern *current_pattern, LEDPattern new_pattern)
+void LED_Set_Pattern(LEDState *led, LEDPattern new_pattern)
 {
-    if(*current_pattern != new_pattern)
+    if(led->pattern != new_pattern)
     {
-        *current_pattern = new_pattern;
-        led_pattern_counter = 0;  // Reset counter when pattern changes
+        led->pattern = new_pattern;
+        led->counter = 0;  // Reset counter when pattern changes
     }
 }
 
-unsigned char LED_Update_Pattern(LEDPattern pattern)
+unsigned char LED_Update_Pattern(LEDState *led)
 {
     unsigned char led_state = 0;
+    unsigned int counter = led->counter;
+    LEDPattern pattern = led->pattern;
     
     switch(pattern)
     {
@@ -197,88 +202,103 @@ unsigned char LED_Update_Pattern(LEDPattern pattern)
             
         case LED_PATTERN_SLOW_BLINK:
             // 500ms on, 500ms off (10 ticks of 50ms each)
-            if(led_pattern_counter < 10)
+            if(counter < 10)
                 led_state = 1;
-            else if(led_pattern_counter < 20)
+            else if(counter < 20)
                 led_state = 0;
             else
-                led_pattern_counter = 0;
+            {
+                led->counter = 0;
+                counter = 0;
+            }
             break;
             
         case LED_PATTERN_FAST_BLINK:
             // 200ms on, 200ms off (4 ticks of 50ms each)
-            if(led_pattern_counter < 4)
+            if(counter < 4)
                 led_state = 1;
-            else if(led_pattern_counter < 8)
+            else if(counter < 8)
                 led_state = 0;
             else
-                led_pattern_counter = 0;
+            {
+                led->counter = 0;
+                counter = 0;
+            }
             break;
             
         case LED_PATTERN_DOUBLE_PULSE:
             // Two quick 100ms pulses with 100ms gaps
             // Pattern: on(2) off(2) on(2) off(6) = 12 ticks
-            if(led_pattern_counter < 2)
+            if(counter < 2)
                 led_state = 1;
-            else if(led_pattern_counter < 4)
+            else if(counter < 4)
                 led_state = 0;
-            else if(led_pattern_counter < 6)
+            else if(counter < 6)
                 led_state = 1;
-            else if(led_pattern_counter < 12)
+            else if(counter < 12)
                 led_state = 0;
             else
-                led_pattern_counter = 0;
+            {
+                led->counter = 0;
+                counter = 0;
+            }
             break;
             
         case LED_PATTERN_TRIPLE_PULSE:
             // Three quick 100ms pulses with 100ms gaps
             // Pattern: on(2) off(2) on(2) off(2) on(2) off(6) = 16 ticks
-            if(led_pattern_counter < 2)
+            if(counter < 2)
                 led_state = 1;
-            else if(led_pattern_counter < 4)
+            else if(counter < 4)
                 led_state = 0;
-            else if(led_pattern_counter < 6)
+            else if(counter < 6)
                 led_state = 1;
-            else if(led_pattern_counter < 8)
+            else if(counter < 8)
                 led_state = 0;
-            else if(led_pattern_counter < 10)
+            else if(counter < 10)
                 led_state = 1;
-            else if(led_pattern_counter < 16)
+            else if(counter < 16)
                 led_state = 0;
             else
-                led_pattern_counter = 0;
+            {
+                led->counter = 0;
+                counter = 0;
+            }
             break;
             
         case LED_PATTERN_SOS:
             // SOS pattern: dot(1) dot(1) dot(1) gap(3) dash(3) dash(3) dash(3) gap(3) dot(1) dot(1) dot(1)
             // Morse: S=3 dots, O=3 dashes, S=3 dots
             // Simplified: on(1) off(1) on(1) off(1) on(1) off(3) on(3) off(1) on(3) off(1) on(3) off(3)
-            if(led_pattern_counter < 1)
+            if(counter < 1)
                 led_state = 1;
-            else if(led_pattern_counter < 2)
+            else if(counter < 2)
                 led_state = 0;
-            else if(led_pattern_counter < 3)
+            else if(counter < 3)
                 led_state = 1;
-            else if(led_pattern_counter < 4)
+            else if(counter < 4)
                 led_state = 0;
-            else if(led_pattern_counter < 5)
+            else if(counter < 5)
                 led_state = 1;
-            else if(led_pattern_counter < 8)
+            else if(counter < 8)
                 led_state = 0;
-            else if(led_pattern_counter < 11)
+            else if(counter < 11)
                 led_state = 1;
-            else if(led_pattern_counter < 12)
+            else if(counter < 12)
                 led_state = 0;
-            else if(led_pattern_counter < 15)
+            else if(counter < 15)
                 led_state = 1;
-            else if(led_pattern_counter < 16)
+            else if(counter < 16)
                 led_state = 0;
-            else if(led_pattern_counter < 19)
+            else if(counter < 19)
                 led_state = 1;
-            else if(led_pattern_counter < 22)
+            else if(counter < 22)
                 led_state = 0;
             else
-                led_pattern_counter = 0;
+            {
+                led->counter = 0;
+                counter = 0;
+            }
             break;
             
         default:
@@ -286,7 +306,8 @@ unsigned char LED_Update_Pattern(LEDPattern pattern)
             break;
     }
     
-    led_pattern_counter++;
+    // Increment LED's independent counter
+    led->counter++;
     return led_state;
 }
 
@@ -313,10 +334,10 @@ void main(void)
     if(!VL53L1X_Init())
     {
         // Initialization failed - SOS pattern on status LED
-        LED_Set_Pattern(&status_led_pattern, LED_PATTERN_SOS);
+        LED_Set_Pattern(&status_led, LED_PATTERN_SOS);
         while(1)
         {
-            RA4 = LED_Update_Pattern(status_led_pattern) ? 1 : 0;
+            RA4 = LED_Update_Pattern(&status_led) ? 1 : 0;
             Delay_ms(50);
         }
     }
@@ -335,7 +356,7 @@ void main(void)
     Delay_ms(100);
 
     // Initialize LED patterns - heartbeat uses slow blink
-    LED_Set_Pattern(&heartbeat_pattern, LED_PATTERN_SLOW_BLINK);
+    LED_Set_Pattern(&heartbeat_led, LED_PATTERN_SLOW_BLINK);
 
     // Main loop - read distance and control LED
     while(1)
@@ -352,65 +373,65 @@ void main(void)
                         if(measurement.range_mm < 150)
                         {
                             // Very close - solid on (red zone)
-                            LED_Set_Pattern(&status_led_pattern, LED_PATTERN_SOLID_ON);
+                            LED_Set_Pattern(&status_led, LED_PATTERN_SOLID_ON);
                         }
                         else if(measurement.range_mm < 300)
                         {
                             // Close - fast blink (yellow zone)
-                            LED_Set_Pattern(&status_led_pattern, LED_PATTERN_FAST_BLINK);
+                            LED_Set_Pattern(&status_led, LED_PATTERN_FAST_BLINK);
                         }
                         else if(measurement.range_mm < 500)
                         {
                             // Medium distance - slow blink (green zone)
-                            LED_Set_Pattern(&status_led_pattern, LED_PATTERN_SLOW_BLINK);
+                            LED_Set_Pattern(&status_led, LED_PATTERN_SLOW_BLINK);
                         }
                         else
                         {
                             // Far away - off (no detection)
-                            LED_Set_Pattern(&status_led_pattern, LED_PATTERN_OFF);
+                            LED_Set_Pattern(&status_led, LED_PATTERN_OFF);
                         }
                         break;
                         
                     case SigmaFail:
                         // Quality/Sigma error - double pulse pattern
-                        LED_Set_Pattern(&status_led_pattern, LED_PATTERN_DOUBLE_PULSE);
+                        LED_Set_Pattern(&status_led, LED_PATTERN_DOUBLE_PULSE);
                         break;
                         
                     case SignalFail:
                         // Signal too weak - triple pulse pattern
-                        LED_Set_Pattern(&status_led_pattern, LED_PATTERN_TRIPLE_PULSE);
+                        LED_Set_Pattern(&status_led, LED_PATTERN_TRIPLE_PULSE);
                         break;
                         
                     case OutOfBoundsFail:
                         // Out of measurement range - fast blink
-                        LED_Set_Pattern(&status_led_pattern, LED_PATTERN_FAST_BLINK);
+                        LED_Set_Pattern(&status_led, LED_PATTERN_FAST_BLINK);
                         break;
                         
                     case HardwareFail:
                     case ProcessingFail:
                     default:
                         // Error condition - SOS pattern
-                        LED_Set_Pattern(&status_led_pattern, LED_PATTERN_SOS);
+                        LED_Set_Pattern(&status_led, LED_PATTERN_SOS);
                         break;
                 }
             }
             else
             {
                 // I2C read failed - error pattern
-                LED_Set_Pattern(&status_led_pattern, LED_PATTERN_TRIPLE_PULSE);
+                LED_Set_Pattern(&status_led, LED_PATTERN_TRIPLE_PULSE);
             }
         }
         else
         {
             // No data ready - slow pulse to show waiting
-            LED_Set_Pattern(&status_led_pattern, LED_PATTERN_DOUBLE_PULSE);
+            LED_Set_Pattern(&status_led, LED_PATTERN_DOUBLE_PULSE);
         }
 
         // Update status LED (RA4) with current pattern
-        RA4 = LED_Update_Pattern(status_led_pattern) ? 1 : 0;
+        RA4 = LED_Update_Pattern(&status_led) ? 1 : 0;
         
         // Update heartbeat LED (RA5) with heartbeat pattern
-        RA5 = LED_Update_Pattern(heartbeat_pattern) ? 1 : 0;
+        RA5 = LED_Update_Pattern(&heartbeat_led) ? 1 : 0;
 
         Delay_ms(50);
     }
