@@ -316,7 +316,7 @@ void main(void)
         LED_Set_Pattern(&status_led_pattern, LED_PATTERN_SOS);
         while(1)
         {
-            RA4 = LED_Update_Pattern(status_led_pattern);
+            RA4 = LED_Update_Pattern(status_led_pattern) ? 1 : 0;
             Delay_ms(50);
         }
     }
@@ -407,10 +407,10 @@ void main(void)
         }
 
         // Update status LED (RA4) with current pattern
-        RA4 = (unsigned char)LED_Update_Pattern(status_led_pattern);
+        RA4 = LED_Update_Pattern(status_led_pattern) ? 1 : 0;
         
         // Update heartbeat LED (RA5) with heartbeat pattern
-        RA5 = (unsigned char)LED_Update_Pattern(heartbeat_pattern);
+        RA5 = LED_Update_Pattern(heartbeat_pattern) ? 1 : 0;
 
         Delay_ms(50);
     }
