@@ -650,6 +650,7 @@ unsigned char I2C_Write_Register32(int reg, int value)
 {
     unsigned char reg_high = (unsigned char)((reg >> 8) & 0xFF);
     unsigned char reg_low = (unsigned char)(reg & 0xFF);
+    unsigned long uvalue = (unsigned long)value;  // Cast to unsigned long once
 
     i2c_error = 0;
     I2C_Start();
@@ -663,16 +664,16 @@ unsigned char I2C_Write_Register32(int reg, int value)
     if(i2c_error) { I2C_Stop(); return 0; }
 
     // Send 4 bytes (MSB first)
-    I2C_Send_Byte((unsigned char)(((unsigned long)value >> 24) & 0xFF));
+    I2C_Send_Byte((unsigned char)((uvalue >> 24) & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
-    I2C_Send_Byte((unsigned char)(((unsigned long)value >> 16) & 0xFF));
+    I2C_Send_Byte((unsigned char)((uvalue >> 16) & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
-    I2C_Send_Byte((unsigned char)((value >> 8) & 0xFF));
+    I2C_Send_Byte((unsigned char)((uvalue >> 8) & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
-    I2C_Send_Byte((unsigned char)(value & 0xFF));
+    I2C_Send_Byte((unsigned char)(uvalue & 0xFF));
     if(i2c_error) { I2C_Stop(); return 0; }
 
     I2C_Stop();
@@ -707,8 +708,8 @@ unsigned char I2C_Read_Register32(int reg, int *value)
     byte2 = I2C_Receive_Byte(1);  // ACK
     byte3 = I2C_Receive_Byte(0);  // NACK (last byte)
 
-    *value = (int)((((unsigned long)byte0 << 24) | ((unsigned long)byte1 << 16)) |
-             (((unsigned long)byte2 << 8) | byte3));
+    *value = (int)(((unsigned long)byte0 << 24) | ((unsigned long)byte1 << 16) |
+             ((unsigned long)byte2 << 8) | (unsigned long)byte3);
 
     I2C_Stop();
     return 1;
