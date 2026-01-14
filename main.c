@@ -61,7 +61,7 @@
 #define DISTANCE_MODE_MEDIUM_TIMEOUT       0x0B
 #define DISTANCE_MODE_LONG_TIMEOUT         0x0A
 
-#define VL53L1X_I2C_ADDR                   0x52
+#define VL53L1X_I2C_ADDR                   (0x29 << 1)   // 7-bit address 0x29, shifted for PIC MSSP
 
 // VL53L1X Default Configuration Array (required for proper initialization)
 // This is the essential configuration block from ST's API
@@ -495,14 +495,13 @@ void I2C_Stop(void)
 void I2C_Send_Byte(unsigned char data)
 {
     SSP1BUF = data;
-    while(SSP1STATbits.BF);  // Wait for transfer complete
+    while(SSP1STATbits.BF);           // Wait until transmit buffer is empty
     
-    // Check for NACK - if received, set error flag
+    // Check for NACK (slave did not acknowledge)
     if(SSP1CON2bits.ACKSTAT)
     {
-        i2c_error = 1;  // NACK received
+        i2c_error = 1;  // NACK received - slave not responding
     }
-    while(SSP1CON2bits.ACKEN);  // Wait for ACK to complete
 }
 
 unsigned char I2C_Receive_Byte(unsigned char ack)
@@ -755,7 +754,7 @@ unsigned char VL53L1X_Init(void)
     
     // Software reset
     if(!VL53L1X_Soft_Reset()) return 0;
-    Delay_ms(50);
+    Delay_ms(120);  // Must wait >= 100ms for firmware to boot after reset
 
     // CRITICAL: Wait for firmware to boot (SYSTEM__BOOT_STATE register bit 0)
     // The VL53L1X will NOT respond properly until firmware is booted
@@ -890,12 +889,17 @@ unsigned char VL53L1X_Start_Single_Shot(void)
 
 unsigned char VL53L1X_Start_Continuous(int period_ms)
 {
-    // Inter-measurement period must be >= timing budget
-    // Convert ms to internal units (approximately period_ms * 1000)
-    unsigned int period_us = (unsigned int)period_ms * 1000;
+    // Inter-measurement period is in units of 1.075 ms
+    // Convert milliseconds to register value
+    unsigned long period_us = (unsigned long)period_ms * 1000;
+    unsigned int period_reg = (unsigned int)(period_us / 1075);  // Convert to 1.075ms units
     
     // Clear interrupt before starting
     if(!I2C_Write_Register(SYSTEM__INTERRUPT_CLEAR, 0x01)) return 0;
+    Delay_ms(1);
+
+    // Set intermeasurement period (in 1.075ms units)
+    if(!I2C_Write_Register32(SYSTEM__INTERMEASUREMENT_PERIOD, (int)period_reg)) return 0;
     Delay_ms(1);
 
     // Start continuous ranging (0x40 = timed mode)
@@ -919,8 +923,8 @@ unsigned char VL53L1X_Is_Data_Ready(void)
 
     if(!I2C_Read_Register(RESULT__RANGE_STATUS, &status)) return 0;
 
-    // Check if data ready (bit 0)
-    return (status & 0x01) ? 0 : 1;  // Inverted logic
+    // Data ready when bit 0 = 0 (NOT ready when bit 0 = 1)
+    return ((status & 0x01) == 0) ? 1 : 0;
 }
 
 unsigned char VL53L1X_Read_Measurement(MeasurementData *data)
